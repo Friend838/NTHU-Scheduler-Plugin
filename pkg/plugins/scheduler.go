@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"strconv"
 
 	v1 "k8s.io/api/core/v1"
@@ -69,9 +70,11 @@ func (cs *CustomScheduler) PreFilter(ctx context.Context, state *framework.Cycle
 	// 1. extract the label of the pod
 	// 2. retrieve the pod with the same group label
 	// 3. justify if the pod can be scheduled
-	label := pod.ObjectMeta.Labels
+	label := map[string]string{
+		groupNameLabel: pod.Labels[groupNameLabel],
+	}
 	selecter := labels.SelectorFromSet(label)
-	minAvailable, _ := strconv.Atoi(label[minAvailableLabel])
+	minAvailable, _ := strconv.Atoi(pod.Labels[minAvailableLabel])
 	pods, _ := cs.handle.SharedInformerFactory().Core().V1().Pods().Lister().List(selecter)
 	if len(pods) < minAvailable {
 		return nil, framework.NewStatus(framework.Unschedulable, "")
@@ -107,12 +110,20 @@ func (cs *CustomScheduler) Score(ctx context.Context, state *framework.CycleStat
 func (cs *CustomScheduler) NormalizeScore(ctx context.Context, state *framework.CycleState, pod *v1.Pod, scores framework.NodeScoreList) *framework.Status {
 	// TODO
 	// find the range of the current score and map to the valid range
-	minScore := framework.MinNodeScore
-	maxScore := framework.MaxNodeScore
+	minScore := int64(math.MaxInt64)
+	maxScore := int64(math.MinInt64)
+	for _, nodeScore := range scores {
+		if nodeScore.Score < minScore {
+			minScore = nodeScore.Score
+		}
+		if nodeScore.Score > maxScore {
+			maxScore = nodeScore.Score
+		}
+	}
+	ratio := float64(framework.MaxNodeScore-framework.MinNodeScore) / float64(maxScore-minScore)
 
-	// Min-Max Normalization
-	for idx, nodeScore := range scores {
-		scores[idx].Score = (nodeScore.Score - minScore) / (maxScore - minScore)
+	for i, nodeScore := range scores {
+		scores[i].Score = int64(float64(nodeScore.Score-minScore)*ratio) + framework.MinNodeScore
 	}
 
 	return nil
