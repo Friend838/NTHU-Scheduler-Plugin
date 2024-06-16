@@ -77,9 +77,11 @@ func (cs *CustomScheduler) PreFilter(ctx context.Context, state *framework.Cycle
 	minAvailable, _ := strconv.Atoi(pod.Labels[minAvailableLabel])
 	pods, _ := cs.handle.SharedInformerFactory().Core().V1().Pods().Lister().List(selecter)
 	if len(pods) < minAvailable {
+		log.Printf("The number of pods: %d doesn't match min available: %d", len(pods), minAvailable)
 		return nil, framework.NewStatus(framework.Unschedulable, "")
 	}
 
+	log.Printf("Pod is successfully pre-filtered")
 	return nil, newStatus
 }
 
@@ -96,11 +98,13 @@ func (cs *CustomScheduler) Score(ctx context.Context, state *framework.CycleStat
 	// 1. retrieve the node allocatable memory
 	// 2. return the score based on the scheduler mode
 	nodeInfo, _ := cs.handle.SnapshotSharedLister().NodeInfos().Get(nodeName)
+	availableMem := nodeInfo.Allocatable.Memory - nodeInfo.Requested.Memory
+	log.Printf("Available memory: %d in node %s", availableMem, nodeInfo.Node().Name)
 	score := int64(0)
 	if cs.scoreMode == leastMode {
-		score = 1 / nodeInfo.Allocatable.Memory
+		score = -availableMem
 	} else if cs.scoreMode == mostMode {
-		score = nodeInfo.Allocatable.Memory
+		score = availableMem
 	}
 
 	return score, nil
@@ -124,6 +128,10 @@ func (cs *CustomScheduler) NormalizeScore(ctx context.Context, state *framework.
 
 	for i, nodeScore := range scores {
 		scores[i].Score = int64(float64(nodeScore.Score-minScore)*ratio) + framework.MinNodeScore
+	}
+
+	for _, nodeScore := range scores {
+		log.Printf("Node name: %s, Score: %d", nodeScore.Name, nodeScore.Score)
 	}
 
 	return nil
